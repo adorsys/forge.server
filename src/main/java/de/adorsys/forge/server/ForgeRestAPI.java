@@ -1,9 +1,12 @@
 package de.adorsys.forge.server;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.StringReader;
+import java.util.ArrayList;
 import java.util.Map.Entry;
 import java.util.Properties;
 import java.util.Set;
@@ -20,9 +23,13 @@ import javax.ws.rs.QueryParam;
 import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.Response.Status;
 import javax.ws.rs.core.StreamingOutput;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
+import org.codehaus.jackson.JsonGenerator.Feature;
+import org.codehaus.jackson.map.ObjectMapper;
 import org.eclipse.jgit.api.Git;
 import org.jboss.forge.ForgeEnvironment;
 import org.jboss.forge.env.Configuration;
@@ -60,10 +67,10 @@ public class ForgeRestAPI {
 	public ForgeRestAPI() {
 		tmpDir = System.getProperties().getProperty("java.io.tmpdir");
 		templateDir = new File(tmpDir, "jim-templates");
-
 	}
 
 	@GET
+	@Path("status")
 	public String status() {
 		if (currentJob == null) {
 			return "waiting for a job";
@@ -71,11 +78,29 @@ public class ForgeRestAPI {
 		return "executing job " + currentJob;
 	}
 
+	@GET
+	@Produces(MediaType.APPLICATION_JSON)
+	public Response listTemplates() throws FileNotFoundException, IOException {
+		updateTemplates();
+		FileInputStream fis = new FileInputStream(getIndexJSONFile());
+		try {
+			String content = IOUtils.toString(fis, "UTF8");
+			return Response.ok(content).build();
+		} finally {
+			fis.close();
+		}
+	}
+
 	@POST
 	@Path("{jobid:[a-zA-Z0-9\\-_]+}/{scriptpath:.+}")
 	@Consumes(MediaType.TEXT_PLAIN)
 	@Produces(MediaType.TEXT_PLAIN)
-	public synchronized Response execute(@PathParam("scriptpath") final String scriptpath, final String properties, @PathParam("jobid") final String jobid, @QueryParam("giturl") final String gitUrl) throws Exception {
+	public synchronized Response execute(@PathParam("scriptpath") final String scriptpath, final String properties,
+			@PathParam("jobid") final String jobid, @QueryParam("giturl") final String gitUrl) throws Exception {
+		final File scriptPath = new File(templateDir, scriptpath);
+		if (!scriptPath.exists()) {
+			return Response.status(Status.NOT_FOUND).entity("Script " + scriptpath + " not in repository").build();
+		}
 		StreamingOutput streamingOutput = new StreamingOutput() {
 
 			@Override
@@ -89,11 +114,11 @@ public class ForgeRestAPI {
 					Properties props = new Properties();
 					props.load(new StringReader(properties));
 
-					Set<Entry<Object,Object>> propEntries = props.entrySet();
+					Set<Entry<Object, Object>> propEntries = props.entrySet();
 					for (Entry<Object, Object> entry : propEntries) {
 						environment.setProperty(String.valueOf(entry.getKey()), entry.getValue());
 					}
-					build(scriptpath, jobid, workingDir);
+					build(scriptPath, jobid, workingDir);
 
 					git.add().addFilepattern(".").call();
 					git.commit().setMessage("Generated project by Forge").call();
@@ -114,7 +139,6 @@ public class ForgeRestAPI {
 		return Response.ok(streamingOutput).build();
 	}
 
-
 	public synchronized void updateTemplates() {
 		try {
 			if (templateDir.exists()) {
@@ -128,12 +152,37 @@ public class ForgeRestAPI {
 				String uri = scopedConfiguration.getString(ForgeServerPlugin.FORGE_SERVER_GIT_TEMPLATE_REPO_URL);
 				Git.cloneRepository().setURI(uri).setDirectory(templateDir).call();
 			}
+			File file = getIndexJSONFile();
+			if (!file.exists()) {
+				shell.println("Create a initial index.json");
+				ArrayList<ForgeTemplate> template = new ArrayList<ForgeTemplate>();
+				ForgeTemplate forgeTemplate = new ForgeTemplate();
+				forgeTemplate.setTitle("Test");
+				forgeTemplate.setPath("test/test.fsh");
+				forgeTemplate.setDescription("This is a configuration demo template");
+				template.add(forgeTemplate);
+				forgeTemplate = new ForgeTemplate();
+				forgeTemplate.setTitle("Tes2t");
+				forgeTemplate.setPath("test/test2.fsh");
+				forgeTemplate.setDescription("This is a configuration demo template");
+				template.add(forgeTemplate);
+				new ObjectMapper().configure(Feature.QUOTE_FIELD_NAMES, false).writeValue(file, template);
+				Git git = Git.open(templateDir);
+				git.add().addFilepattern("index.json").call();
+				git.commit().setMessage("Created initial index.json").call();
+				git.push().call();
+			}
 		} catch (Exception e) {
 			shell.println("Problem updating generation templates... continue");
 		}
 	}
 
-	private void build(String scriptpath, String jobid, File workingDir) throws Exception {
+	private File getIndexJSONFile() {
+		File file = new File(templateDir, "index.json");
+		return file;
+	}
+
+	private void build(File scriptPath, String jobid, File workingDir) throws Exception {
 		currentJob = jobid;
 
 		updateTemplates();
@@ -143,8 +192,8 @@ public class ForgeRestAPI {
 		environment.setProperty("templatedir", templateDir.getAbsolutePath());
 		Resource<File> workingDirResource = resourceFactory.getResourceFrom(workingDir);
 		shell.setCurrentResource(workingDirResource);
-		shell.println("run " + scriptpath);
-		shell.execute(new File(templateDir, scriptpath));
+		shell.println("run " + scriptPath.getAbsolutePath());
+		shell.execute(scriptPath);
 		shell.setCurrentResource(resourceFactory.getResourceFrom(new File(tmpDir)));
 	}
 

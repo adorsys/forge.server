@@ -74,7 +74,9 @@ public class ForgeServerPlugin implements Plugin {
 		JAXRSApplication.getServices().add(forgeRestAPI);
 
 		handler.setInitParameter("javax.ws.rs.Application", "de.adorsys.forge.server.JAXRSApplication");
-		handler.setInitParameter("resteasy.providers", "org.jboss.resteasy.plugins.providers.StringTextStar,org.jboss.resteasy.plugins.providers.StreamingOutputProvider");
+		handler.setInitParameter("resteasy.providers", "org.jboss.resteasy.plugins.providers.StringTextStar," +
+				"org.jboss.resteasy.plugins.providers.StreamingOutputProvider," +
+				"org.jboss.resteasy.plugins.providers.jackson.ResteasyJacksonProvider");
 		handler.addServlet(servletHolder, "/*");
 		handler.start();
 		server.start();
