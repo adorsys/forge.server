@@ -1,0 +1,151 @@
+package de.adorsys.forge.server;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.StringReader;
+import java.util.Map.Entry;
+import java.util.Properties;
+import java.util.Set;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import javax.ws.rs.Consumes;
+import javax.ws.rs.GET;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.Produces;
+import javax.ws.rs.QueryParam;
+import javax.ws.rs.WebApplicationException;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.StreamingOutput;
+
+import org.apache.commons.io.FileUtils;
+import org.eclipse.jgit.api.Git;
+import org.jboss.forge.ForgeEnvironment;
+import org.jboss.forge.env.Configuration;
+import org.jboss.forge.env.ConfigurationScope;
+import org.jboss.forge.project.services.ResourceFactory;
+import org.jboss.forge.resources.Resource;
+import org.jboss.forge.shell.Shell;
+
+/**
+ * 
+ * @author sso
+ */
+@Path("/forge")
+@Singleton
+public class ForgeRestAPI {
+
+	@Inject
+	Shell shell;
+
+	@Inject
+	ForgeEnvironment environment;
+
+	@Inject
+	ResourceFactory resourceFactory;
+
+	@Inject
+	Configuration config;
+
+	private final String tmpDir;
+
+	private String currentJob;
+
+	private final File templateDir;
+
+	public ForgeRestAPI() {
+		tmpDir = System.getProperties().getProperty("java.io.tmpdir");
+		templateDir = new File(tmpDir, "jim-templates");
+
+	}
+
+	@GET
+	public String status() {
+		if (currentJob == null) {
+			return "waiting for a job";
+		}
+		return "executing job " + currentJob;
+	}
+
+	@POST
+	@Path("{jobid:[a-zA-Z0-9\\-_]+}/{scriptpath:.+}")
+	@Consumes(MediaType.TEXT_PLAIN)
+	@Produces(MediaType.TEXT_PLAIN)
+	public synchronized Response execute(@PathParam("scriptpath") final String scriptpath, final String properties, @PathParam("jobid") final String jobid, @QueryParam("giturl") final String gitUrl) throws Exception {
+		StreamingOutput streamingOutput = new StreamingOutput() {
+
+			@Override
+			public void write(OutputStream output) throws IOException, WebApplicationException {
+				shell.setOutputStream(output);
+				File workingDir = new File(tmpDir, "forge-job-" + jobid);
+				try {
+					Git.cloneRepository().setURI(gitUrl).setDirectory(workingDir).call();
+					Git git = Git.open(workingDir);
+
+					Properties props = new Properties();
+					props.load(new StringReader(properties));
+
+					Set<Entry<Object,Object>> propEntries = props.entrySet();
+					for (Entry<Object, Object> entry : propEntries) {
+						environment.setProperty(String.valueOf(entry.getKey()), entry.getValue());
+					}
+					build(scriptpath, jobid, workingDir);
+
+					git.add().addFilepattern(".").call();
+					git.commit().setMessage("Generated project by Forge").call();
+					shell.println("commit the files");
+
+					git.push().call();
+					shell.println("push to git");
+				} catch (Exception e) {
+					throw new WebApplicationException(e);
+				} finally {
+					FileUtils.deleteDirectory(workingDir);
+					shell.setOutputStream(System.out);
+					currentJob = null;
+				}
+
+			}
+		};
+		return Response.ok(streamingOutput).build();
+	}
+
+
+	public synchronized void updateTemplates() {
+		try {
+			if (templateDir.exists()) {
+				shell.println("Updating Templates");
+				Git git = Git.open(templateDir);
+				git.pull().call();
+			} else {
+				shell.println("Checkout Templates");
+
+				Configuration scopedConfiguration = config.getScopedConfiguration(ConfigurationScope.USER);
+				String uri = scopedConfiguration.getString(ForgeServerPlugin.FORGE_SERVER_GIT_TEMPLATE_REPO_URL);
+				Git.cloneRepository().setURI(uri).setDirectory(templateDir).call();
+			}
+		} catch (Exception e) {
+			shell.println("Problem updating generation templates... continue");
+		}
+	}
+
+	private void build(String scriptpath, String jobid, File workingDir) throws Exception {
+		currentJob = jobid;
+
+		updateTemplates();
+
+		shell.setAcceptDefaults(true);
+		environment.setProperty("VERBOSE", "true");
+		environment.setProperty("templatedir", templateDir.getAbsolutePath());
+		Resource<File> workingDirResource = resourceFactory.getResourceFrom(workingDir);
+		shell.setCurrentResource(workingDirResource);
+		shell.println("run " + scriptpath);
+		shell.execute(new File(templateDir, scriptpath));
+		shell.setCurrentResource(resourceFactory.getResourceFrom(new File(tmpDir)));
+	}
+
+}
