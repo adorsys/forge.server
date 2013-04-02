@@ -8,5 +8,5 @@ Installation
 
 `forge git-plugin `
 
-forge-server setup --gitTemplateRepoUrl  --autostart true
+`forge-server setup --gitTemplateRepoUrl https://github.com/adorsys/forge.server-templates.git --autostart true`
 
