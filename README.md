@@ -27,4 +27,5 @@ Show current job: [http://localhost:8081/forge](http://localhost:8081/forge/stat
 
 Run the generator:
 
-`curl -X POST -d "key=value\n" -H "Content-Type:application/json" http://localhost:8081/forge/JOBID/simplewebapp/simplewebapp.fsh?giturl=https://user:password@github.com/adorsys/forge.server.git`
+`curl -X POST -d "key=value\n" -H "Content-Type:application/json" \`
+`http://localhost:8081/forge/JOBID/simplewebapp/simplewebapp.fsh?giturl=https://user:password@github.com/adorsys/forge.server.git`
