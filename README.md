@@ -23,7 +23,7 @@ Rest Interface
 
 List of possibble Teamplates: [http://localhost:8081/forge](http://localhost:8081/forge)
 
-Show current job: [http://localhost:8081/forge](http://localhost:8081/forge/status)
+Show current job: [http://localhost:8081/forge/status](http://localhost:8081/forge/status)
 
 Run the generator:
 
